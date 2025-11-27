@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Family Game Night - TV</title>
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in { animation: fadeIn 0.5s ease-out; }
+    body { overflow: hidden; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white">
+  <div id="app" class="min-h-screen p-8"></div>
+
+  <script>
+    const SERVER_URL = 'https://family-game-night-bbv8.onrender.com';
+    const socket = io(SERVER_URL);
+
+    let gameState = {
+      screen: 'LOBBY', // LOBBY, GAME_SELECT, PLAYING, LEADERBOARD
+      roomCode: '',
+      players: [],
+      selectedGame: null,
+      currentQuestion: null,
+      questionNumber: 0,
+      timeLeft: 15,
+      buzzedPlayer: null,
+      showAnswer: false
+    };
+
+    let timerInterval = null;
+
+    // Socket events
+    socket.on('connect', () => {
+      console.log('Connected to server');
+      socket.emit('create_room', (response) => {
+        if (response.success) {
+          gameState.roomCode = response.roomCode;
+          render();
+        }
+      });
+    });
+
+    socket.on('player_joined', (player) => {
+      if (!gameState.players.find(p => p.id === player.id)) {
+        gameState.players.push(player);
+        render();
+      }
+    });
+
+    socket.on('player_left', (data) => {
+      gameState.players = gameState.players.filter(p => p.id !== data.playerId);
+      render();
+    });
+
+    socket.on('player_buzzed', (data) => {
+      gameState.buzzedPlayer = data.playerId;
+      clearInterval(timerInterval);
+      render();
+    });
+
+    socket.on('answer_submitted', (data) => {
+      console.log('Answer submitted:', data);
+      gameState.showAnswer = true;
+      render();
+      
+      setTimeout(() => {
+        gameState.showAnswer = false;
+      }, 2000);
+    });
+
+    socket.on('new_question', (data) => {
+      gameState.currentQuestion = data.question;
+      gameState.questionNumber = data.questionNumber;
+      gameState.timeLeft = 15;
+      gameState.buzzedPlayer = null;
+      gameState.showAnswer = false;
+      startTimer();
+      render();
+    });
+
+    socket.on('round_end', (data) => {
+      gameState.screen = 'LEADERBOARD';
+      gameState.players = data.leaderboard;
+      render();
+      
+      setTimeout(() => {
+        gameState.screen = 'GAME_SELECT';
+        gameState.questionNumber = 0;
+        render();
+      }, 8000);
+    });
+
+    // Game logic
+    function startGame(gameId) {
+      gameState.selectedGame = gameId;
+      gameState.screen = 'PLAYING';
+      socket.emit('start_game', { 
+        roomCode: gameState.roomCode, 
+        game: gameId 
+      });
+      render();
+    }
+
+    function startTimer() {
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        gameState.timeLeft--;
+        if (gameState.timeLeft <= 0) {
+          clearInterval(timerInterval);
+        }
+        render();
+      }, 1000);
+    }
+
+    // Render functions
+    function render() {
+      const app = document.getElementById('app');
+      
+      if (gameState.screen === 'LOBBY') {
+        app.innerHTML = renderLobby();
+      } else if (gameState.screen === 'GAME_SELECT') {
+        app.innerHTML = renderGameSelect();
+      } else if (gameState.screen === 'PLAYING') {
+        app.innerHTML = renderPlaying();
+      } else if (gameState.screen === 'LEADERBOARD') {
+        app.innerHTML = renderLeaderboard();
+      }
+    }
+
+    function renderLobby() {
+      return `
+        <div class="flex flex-col items-center justify-center min-h-screen animate-fade-in">
+          <div class="text-center mb-12">
+            <div class="text-8xl mb-6">🎮</div>
+            <h1 class="text-7xl font-black mb-4 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+              FAMILY GAME NIGHT
+            </h1>
+            <p class="text-2xl text-purple-300">Join the fun!</p>
+          </div>
+          
+          <div class="bg-white/10 backdrop-blur-lg rounded-3xl p-12 border border-white/20 mb-8">
+            <p class="text-xl mb-4 text-center text-purple-200">
+              Scan QR code or go to: <span class="font-bold text-white">${SERVER_URL.replace('https://', '')}</span>
+            </p>
+            <div class="text-8xl font-black text-center tracking-wider bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
+              ${gameState.roomCode}
+            </div>
+          </div>
+
+          <div class="flex items-center gap-4 mb-8">
+            <div class="text-4xl">👥</div>
+            <span class="text-3xl font-bold">${gameState.players.length} Players</span>
+          </div>
+
+          <div class="grid grid-cols-5 gap-4 mb-8">
+            ${gameState.players.map(player => `
+              <div class="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20 text-center">
+                <div class="text-4xl mb-2">${player.avatar}</div>
+                <div class="font-bold text-lg">${player.name}</div>
+              </div>
+            `).join('')}
+          </div>
+
+          ${gameState.players.length >= 2 ? `
+            <button 
+              onclick="gameState.screen = 'GAME_SELECT'; render()"
+              class="px-12 py-4 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 rounded-xl font-bold text-2xl transition-all transform hover:scale-105 shadow-lg">
+              START GAME 🚀
+            </button>
+          ` : `
+            <p class="text-xl text-purple-300">Waiting for at least 2 players...</p>
+          `}
+        </div>
+      `;
+    }
+
+    function renderGameSelect() {
+      const games = [
+        { id: 'trivia', name: 'Trivia Blitz', icon: '⚡', color: 'from-purple-500 to-pink-500' },
+        { id: 'draw', name: 'Draw Fast', icon: '🎨', color: 'from-blue-500 to-cyan-500', disabled: true },
+        { id: 'price', name: 'Price Check', icon: '💰', color: 'from-green-500 to-emerald-500', disabled: true }
+      ];
+
+      return `
+        <div class="flex flex-col items-center justify-center min-h-screen animate-fade-in">
+          <h2 class="text-6xl font-black mb-12 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+            CHOOSE YOUR GAME
+          </h2>
+          
+          <div class="grid grid-cols-3 gap-8">
+            ${games.map(game => `
+              <button
+                onclick="${game.disabled ? '' : `startGame('${game.id}')`}"
+                ${game.disabled ? 'disabled' : ''}
+                class="bg-gradient-to-br ${game.color} p-8 rounded-3xl transform transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-2xl">
+                <div class="text-8xl mb-4">${game.icon}</div>
+                <h3 class="text-3xl font-black mb-2">${game.name}</h3>
+                <p class="text-lg opacity-90">${game.disabled ? 'Coming Soon!' : 'Ready to Play!'}</p>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderPlaying() {
+      if (!gameState.currentQuestion) return '<div class="text-center">Loading...</div>';
+
+      return `
+        <div class="flex flex-col items-center justify-center min-h-screen animate-fade-in">
+          <div class="flex justify-between w-full mb-8">
+            <div class="flex items-center gap-4 bg-white/10 backdrop-blur px-6 py-3 rounded-xl">
+              <span class="text-2xl">⚡</span>
+              <span class="text-2xl font-bold">Question ${gameState.questionNumber}/5</span>
+            </div>
+            
+            <div class="flex items-center gap-4 bg-white/10 backdrop-blur px-6 py-3 rounded-xl ${gameState.timeLeft <= 5 ? 'animate-pulse bg-red-500/20' : ''}">
+              <span class="text-2xl">⏱️</span>
+              <span class="text-2xl font-bold">${gameState.timeLeft}s</span>
+            </div>
+          </div>
+
+          <div class="bg-white/10 backdrop-blur-lg rounded-3xl p-12 mb-8 max-w-4xl w-full border border-white/20">
+            <h3 class="text-5xl font-bold text-center mb-8">${gameState.currentQuestion.q}</h3>
+            
+            <div class="grid grid-cols-2 gap-6">
+              ${gameState.currentQuestion.choices.map((choice, idx) => `
+                <div class="p-6 rounded-2xl text-2xl font-bold text-center transition-all ${
+                  gameState.showAnswer && choice === gameState.currentQuestion.a 
+                    ? 'bg-green-500 scale-105' 
+                    : gameState.showAnswer 
+                    ? 'bg-red-500/30' 
+                    : 'bg-white/20'
+                }">
+                  ${choice}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          ${gameState.buzzedPlayer ? `
+            <div class="bg-yellow-500/20 backdrop-blur px-8 py-4 rounded-xl border-2 border-yellow-400">
+              <span class="text-2xl font-bold">
+                ${gameState.players.find(p => p.id === gameState.buzzedPlayer)?.name} buzzed in!
+              </span>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    function renderLeaderboard() {
+      const sortedPlayers = [...gameState.players].sort((a, b) => (b.score || 0) - (a.score || 0));
+
+      return `
+        <div class="flex flex-col items-center justify-center min-h-screen animate-fade-in">
+          <div class="text-8xl mb-6 animate-bounce">🏆</div>
+          <h2 class="text-6xl font-black mb-12 bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
+            LEADERBOARD
+          </h2>
+          
+          <div class="space-y-4 w-full max-w-2xl">
+            ${sortedPlayers.map((player, idx) => `
+              <div class="flex items-center justify-between p-6 rounded-2xl ${
+                idx === 0 ? 'bg-gradient-to-r from-yellow-500 to-orange-500 scale-105' :
+                idx === 1 ? 'bg-gradient-to-r from-gray-400 to-gray-500' :
+                idx === 2 ? 'bg-gradient-to-r from-amber-600 to-amber-700' :
+                'bg-white/10 backdrop-blur'
+              } border border-white/20">
+                <div class="flex items-center gap-4">
+                  <span class="text-4xl font-black">${idx + 1}</span>
+                  <span class="text-3xl">${player.avatar}</span>
+                  <span class="text-2xl font-bold">${player.name}</span>
+                </div>
+                <span class="text-4xl font-black">${player.score || 0}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
